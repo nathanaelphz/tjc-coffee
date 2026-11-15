@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Waiters have no login, so orders and config are open to read/write.
+    // The barista PIN is a UI gate only. Fine for a church coffee corner;
+    // do not store anything sensitive here.
+    match /orders/{id} {
+      allow read, write: if true;
+    }
+    match /config/{id} {
+      allow read, write: if true;
+    }
+  }
+}
