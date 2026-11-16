@@ -1,335 +1,490 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   DRINKS,
-  type DrinkId,
-  type OrderItem,
-  type Order,
-  type TableSpot,
-  type AppConfig,
   EMPTY_CONFIG,
-  encodeTable,
+  type AppConfig,
+  type DrinkId,
+  type Order,
+  type OrderStatus,
+  type TableSpot,
 } from "@/lib/types";
-import { backend } from "@/lib/data";
+import { backend, downloadCsv } from "@/lib/data";
 import { useI18n, LangToggle } from "@/lib/i18n";
-import TopBar from "@/components/TopBar";
+import TopBar, { Mark } from "@/components/TopBar";
 import StatusBar from "@/components/StatusBar";
 import TableMap from "@/components/TableMap";
 import DrinkArt from "@/components/DrinkArt";
-import DrinkSheet from "@/components/DrinkSheet";
 
-const MINE_KEY = "tjc-my-orders";
+const PIN = process.env.NEXT_PUBLIC_BARISTA_PIN || "1234";
+const AUTH_KEY = "tjc-barista-ok";
 
-function readMine(): string[] {
-  try {
-    return JSON.parse(window.localStorage.getItem(MINE_KEY) ?? "[]");
-  } catch {
-    return [];
-  }
-}
-
-export default function WaiterPage() {
-  const { t, drinkName, formatLabel } = useI18n();
-
-  const [config, setConfig] = useState<AppConfig>(EMPTY_CONFIG);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [mineIds, setMineIds] = useState<string[]>([]);
-
-  const [table, setTable] = useState<TableSpot | null>(null);
-  const [name, setName] = useState("");
-  const [sheet, setSheet] = useState<DrinkId | null>(null);
-  const [cart, setCart] = useState<OrderItem[]>([]);
-  const [urgent, setUrgent] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+export default function BaristaPage() {
+  const [authed, setAuthed] = useState<boolean | null>(null);
 
   useEffect(() => {
-    setMineIds(readMine());
-    const u1 = backend.subscribeConfig(setConfig);
-    const u2 = backend.subscribeOrders(setOrders);
-    return () => {
-      u1();
-      u2();
-    };
+    setAuthed(window.sessionStorage.getItem(AUTH_KEY) === "1");
   }, []);
 
-  const showToast = (m: string) => {
-    setToast(m);
-    window.setTimeout(() => setToast(null), 2400);
-  };
+  if (authed === null) return null;
+  if (!authed)
+    return (
+      <Login
+        onOk={() => {
+          window.sessionStorage.setItem(AUTH_KEY, "1");
+          setAuthed(true);
+        }}
+      />
+    );
+  // Log out = leave the barista area entirely, back to the waiter page.
+  return (
+    <Board
+      onLogout={() => {
+        window.sessionStorage.removeItem(AUTH_KEY);
+        window.location.href = "/";
+      }}
+    />
+  );
+}
 
-  const label = name.trim() ? name.trim() : table ? encodeTable(table.n) : "";
-  const totalDrinks = cart.reduce((n, it) => n + it.qty, 0);
+/* ---------------- login ---------------- */
 
-  const addItem = (it: OrderItem) => {
-    setCart((c) => [...c, it]);
-    setSheet(null);
-  };
+function Login({ onOk }: { onOk: () => void }) {
+  const { t } = useI18n();
+  const [pin, setPin] = useState("");
+  const [bad, setBad] = useState(false);
 
-  const send = async () => {
-    if (!label || cart.length === 0 || sending) return;
-    setSending(true);
-    try {
-      const id = await backend.addOrder({
-        tableLabel: label,
-        items: cart,
-        urgent,
-        status: "pending",
-        createdAt: Date.now(),
-        archived: false,
-      });
-      const ids = [...readMine(), id];
-      window.localStorage.setItem(MINE_KEY, JSON.stringify(ids));
-      setMineIds(ids);
-      setCart([]);
-      setUrgent(false);
-      setName("");
-      setTable(null);
-      setSent(true);
-      window.setTimeout(() => setSent(false), 1900);
-    } catch (e) {
-      showToast(`${t("sendFailed")}: ${e instanceof Error ? e.message : ""}`);
-    } finally {
-      setSending(false);
+  const push = (d: string) => {
+    if (pin.length >= 4) return;
+    const next = pin + d;
+    setPin(next);
+    if (next.length === 4) {
+      if (next === PIN) window.setTimeout(onOk, 150);
+      else window.setTimeout(() => { setBad(true); setPin(""); }, 150);
     }
   };
 
-  const mine = useMemo(
-    () => orders.filter((o) => mineIds.includes(o.id) && !o.archived).reverse(),
-    [orders, mineIds]
-  );
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "←"];
 
-  const heroWords = t("heroTitle").split(" ");
+  return (
+    <main className="login">
+      <div className="login-card glass">
+        <Mark size={44} />
+        <h1>{t("loginTitle")}</h1>
+        <p className="muted">{t("enterPin")}</p>
+        <div className={`dots${bad ? " bad" : ""}`}>
+          {[0, 1, 2, 3].map((i) => (
+            <i key={i} className={i < pin.length ? "on" : ""} />
+          ))}
+        </div>
+        <p className="err">{bad ? t("wrongPin") : ""}</p>
+        <div className="keypad">
+          {keys.map((k, i) =>
+            k === "" ? (
+              <span key={i} />
+            ) : (
+              <button
+                key={i}
+                className={`key${k === "←" ? " ghost" : ""}`}
+                onClick={() => { setBad(false); k === "←" ? setPin(pin.slice(0, -1)) : push(k); }}
+              >
+                {k}
+              </button>
+            )
+          )}
+        </div>
+        <a href="/" className="link-btn" style={{ display: "inline-block", marginTop: 20 }}>
+          ← {t("backToOrder")}
+        </a>
+      </div>
+    </main>
+  );
+}
+
+/* ---------------- sound ---------------- */
+
+function chime() {
+  try {
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AC();
+    [880, 1320].forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.type = "sine";
+      o.frequency.value = f;
+      const s = ctx.currentTime + i * 0.12;
+      g.gain.setValueAtTime(0.0001, s);
+      g.gain.exponentialRampToValueAtTime(0.18, s + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, s + 0.5);
+      o.start(s);
+      o.stop(s + 0.5);
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ---------------- board ---------------- */
+
+type Tab = "orders" | "floor" | "menu" | "history";
+
+function Board({ onLogout }: { onLogout: () => void }) {
+  const { t, drinkName } = useI18n();
+  const [tab, setTab] = useState<Tab>("orders");
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [config, setConfig] = useState<AppConfig>(EMPTY_CONFIG);
+  const [sound, setSound] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
+  const prevIds = useRef<Set<string> | null>(null);
+  const fresh = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const u1 = backend.subscribeOrders((list) => {
+      const ids = new Set(list.filter((o) => !o.archived).map((o) => o.id));
+      if (prevIds.current) {
+        for (const id of ids)
+          if (!prevIds.current.has(id)) {
+            fresh.current.add(id);
+            if (sound) chime();
+            window.setTimeout(() => fresh.current.delete(id), 1800);
+          }
+      }
+      prevIds.current = ids;
+      setOrders(list);
+    });
+    const u2 = backend.subscribeConfig(setConfig);
+    return () => { u1(); u2(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sound]);
+
+  const showToast = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2200); };
+  const live = useMemo(() => orders.filter((o) => !o.archived), [orders]);
+
+  const tabs: { id: Tab; label: string; n?: number }[] = [
+    { id: "orders", label: t("tabOrders"), n: live.filter((o) => o.status !== "done").length },
+    { id: "floor", label: t("tabFloor") },
+    { id: "menu", label: t("tabMenu") },
+    { id: "history", label: t("tabHistory") },
+  ];
 
   return (
     <div className="page">
       <TopBar>
         <LangToggle />
-        <Link href="/barista" className="pill btn-ghost" style={{ minHeight: 42, padding: "0 16px", fontSize: "0.9rem" }}>
-          {t("imBarista")}
-        </Link>
+        <button className="icon-btn" onClick={() => setSound((s) => !s)} aria-label={sound ? t("soundOn") : t("soundOff")} aria-pressed={sound}>
+          {sound ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 5 6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14" />
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 5 6 9H2v6h4l5 4zM22 9l-6 6M16 9l6 6" />
+            </svg>
+          )}
+        </button>
+        <button className="pill btn-ghost" style={{ minHeight: 42, padding: "0 16px", fontSize: "0.9rem" }} onClick={onLogout}>
+          {t("logout")}
+        </button>
       </TopBar>
 
       <StatusBar />
+      <h1 className="board-title">{t("baristaTitle")}</h1>
 
-      <div className="waiter-grid">
-        <div className="col-left">
-          <section className="hero">
-            <h1 className="hero-title">
-              {heroWords.map((w, i) => (
-                <span className="w" style={{ "--i": i } as React.CSSProperties} key={i}>
-                  {w}
-                </span>
-              ))}
-            </h1>
-            <p className="hero-sub">{t("heroSub")}</p>
-          </section>
-
-          <section className="glass panel" aria-label={t("whereTitle")}>
-            <h2 className="h2">{t("whereTitle")}</h2>
-            {config.tables.length > 0 ? (
-              <>
-                <p className="muted" style={{ marginBottom: 12 }}>
-                  {t("tapTable")}
-                </p>
-                <TableMap tables={config.tables} mode="pick" selectedId={table?.id ?? null} onPick={(tb) => { setTable(tb); setName(""); }} />
-                <p className="muted" style={{ margin: "14px 0 8px" }}>
-                  {t("orTypeName")}
-                </p>
-              </>
-            ) : (
-              <p className="muted" style={{ marginBottom: 10 }}>
-                {t("noMapYet")}
-              </p>
-            )}
-            <input
-              className="field"
-              value={name}
-              onChange={(e) => { setName(e.target.value); if (e.target.value.trim()) setTable(null); }}
-              placeholder={t("namePlaceholder")}
-            />
-            {label && (
-              <div className="dest">
-                <span>{t("orderingFor")}</span>
-                <strong>{formatLabel(label)}</strong>
-              </div>
-            )}
-          </section>
-        </div>
-
-        <div className="col-right">
-          <section aria-label={t("drinksTitle")}>
-            <h2 className="h2" style={{ margin: "0 4px 14px" }}>
-              {t("drinksTitle")}
-            </h2>
-            <div className="drink-grid">
-              {DRINKS.map((d, i) => {
-                const sold = Boolean(config.soldOut[d]);
-                return (
-                  <button
-                    key={d}
-                    className="drink glass rim"
-                    style={{ "--i": i } as React.CSSProperties}
-                    disabled={sold}
-                    onClick={() => setSheet(d)}
-                  >
-                    {sold && <span className="badge sold">{t("soldOut")}</span>}
-                    <DrinkArt className="drink-art" drink={d} size={92} />
-                    <span className="drink-name">{drinkName(d)}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          {cart.length > 0 && (
-            <section className="glass panel" aria-label={t("yourOrder")}>
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
-                <h2 className="h2" style={{ margin: 0 }}>
-                  {t("yourOrder")}
-                </h2>
-                <span className="muted">
-                  {totalDrinks} {t("drinksCount")}
-                </span>
-              </div>
-              {cart.map((it, i) => (
-                <div className="order-line" key={i}>
-                  <DrinkArt drink={it.drink} cold={it.temp === "cold"} lessIce={it.lessIce} size={48} />
-                  <div style={{ minWidth: 0 }}>
-                    <div className="line-name">
-                      {it.qty > 1 && <b style={{ color: "var(--peach)" }}>{it.qty}× </b>}
-                      {drinkName(it.drink)}
-                    </div>
-                    <div className="line-meta">
-                      <span className={`tag ${it.temp}`}>{it.temp === "cold" ? t("cold") : t("hot")}</span>
-                      {it.lessSweet && <span className="tag">{t("lessSweet")}</span>}
-                      {it.lessIce && <span className="tag">{t("lessIce")}</span>}
-                      {it.remarks && <span className="tag note">{it.remarks}</span>}
-                    </div>
-                  </div>
-                  <button className="icon-btn" aria-label={t("remove")} onClick={() => setCart((c) => c.filter((_, j) => j !== i))}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-                      <path d="M5 5l14 14M19 5L5 19" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-
-              <button className="switch-row" onClick={() => setUrgent(!urgent)} style={{ width: "100%", textAlign: "left", marginTop: 14 }}>
-                <span>
-                  <strong>⚡ {t("urgent")}</strong>
-                  <span className="muted" style={{ fontSize: "0.82rem" }}>
-                    {t("urgentHint")}
-                  </span>
-                </span>
-                <span className={`switch danger`} role="switch" aria-checked={urgent} />
-              </button>
-            </section>
-          )}
-
-          {mine.length > 0 && (
-            <section aria-label={t("myOrders")}>
-              <h2 className="h2" style={{ margin: "0 4px 14px" }}>
-                {t("myOrders")}
-              </h2>
-              <div className="myorders">
-                {mine.map((o) => (
-                  <MyOrder key={o.id} order={o} onCancel={() => backend.removeOrder(o.id)} />
-                ))}
-              </div>
-            </section>
-          )}
-        </div>
+      <div className="seg tabs" role="tablist">
+        {tabs.map((x) => (
+          <button key={x.id} className={tab === x.id ? "on" : ""} role="tab" aria-selected={tab === x.id} onClick={() => setTab(x.id)}>
+            {x.label}
+            {x.n ? <span className="tab-count">{x.n}</span> : null}
+          </button>
+        ))}
       </div>
 
-      {cart.length > 0 && (
-        <div className="cartbar glass rim">
-          <div className="cart-info">
-            <div className="cart-stack">
-              {cart.slice(0, 3).map((it, i) => (
-                <DrinkArt key={i} drink={it.drink} cold={it.temp === "cold"} size={40} />
-              ))}
-            </div>
-            <div className="cart-text">
-              <strong>{totalDrinks} {t("drinksCount")}</strong>
-              <span>{label ? formatLabel(label) : t("chooseWhereFirst")}</span>
-            </div>
-          </div>
-          <button className="pill btn-foam" disabled={!label || sending} onClick={send}>
-            {t("sendOrder")}
-          </button>
-        </div>
-      )}
-
-      {sheet && <DrinkSheet drink={sheet} onClose={() => setSheet(null)} onAdd={addItem} />}
+      {tab === "orders" && <OrdersBoard orders={live} freshSet={fresh.current} />}
+      {tab === "floor" && <Floor config={config} onSaved={() => showToast(t("mapSaved"))} />}
+      {tab === "menu" && <Menu config={config} />}
+      {tab === "history" && <History orders={orders} onEnded={() => showToast(t("sessionEnded"))} />}
 
       {toast && <div className="toast">{toast}</div>}
-
-      {sent && (
-        <div className="sent" role="status">
-          <div className="sent-inner">
-            <svg width="130" height="130" viewBox="0 0 64 64" fill="none">
-              <defs>
-                <clipPath id="sentclip">
-                  <path d="M14 26h30v10a14 14 0 0 1-14 14h-2a14 14 0 0 1-14-14z" />
-                </clipPath>
-                <linearGradient id="sentg" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stopColor="#f7e6d6" />
-                  <stop offset="1" stopColor="#f0b27a" />
-                </linearGradient>
-              </defs>
-              <path d="M14 26h30v10a14 14 0 0 1-14 14h-2a14 14 0 0 1-14-14z" fill="rgba(255,255,255,0.08)" />
-              <g clipPath="url(#sentclip)">
-                <rect className="fill" x="10" y="26" width="40" height="30" fill="url(#sentg)" />
-              </g>
-              <path d="M44 29h4a5 5 0 0 1 0 10h-4" stroke="url(#sentg)" strokeWidth="4" />
-              <path className="steam" d="M24 10c-3 3 3 5 0 9M32 10c-3 3 3 5 0 9" stroke="#f6efe6" strokeWidth="2.5" strokeLinecap="round" />
-            </svg>
-            <p className="sent-title">{t("orderSent")}</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
-function MyOrder({ order, onCancel }: { order: Order; onCancel: () => void }) {
-  const { t, drinkName, formatLabel } = useI18n();
-  const [confirm, setConfirm] = useState(false);
+/* ---------------- orders kanban ---------------- */
 
-  const step = order.status === "pending" ? 1 : order.status === "making" ? 2 : 3;
-  const statusLabel = order.status === "pending" ? t("pending") : order.status === "making" ? t("making") : t("done");
+function OrdersBoard({ orders, freshSet }: { orders: Order[]; freshSet: Set<string> }) {
+  const { t } = useI18n();
+  const [mobileCol, setMobileCol] = useState<OrderStatus>("pending");
+
+  const byStatus = (s: OrderStatus) =>
+    orders
+      .filter((o) => o.status === s)
+      .sort((a, b) => Number(b.urgent) - Number(a.urgent) || a.createdAt - b.createdAt);
+
+  const pending = byStatus("pending");
+  const making = byStatus("making");
+  const done = byStatus("done").reverse();
+
+  const cols: { s: OrderStatus; label: string; list: Order[]; empty: string }[] = [
+    { s: "pending", label: t("pending"), list: pending, empty: t("emptyWaiting") },
+    { s: "making", label: t("making"), list: making, empty: t("emptyMaking") },
+    { s: "done", label: t("done"), list: done, empty: t("emptyDone") },
+  ];
+
+  const setStatus = (id: string, status: OrderStatus) => backend.updateOrder(id, { status });
 
   return (
-    <article className={`glass myorder${order.status === "done" ? " ready" : ""}`}>
-      <div className="myorder-head">
-        <strong>{formatLabel(order.tableLabel)}</strong>
-        {order.urgent && <span className="badge urgent">⚡ {t("urgent")}</span>}
+    <>
+      <div className="seg col-tabs">
+        {cols.map((c) => (
+          <button key={c.s} className={mobileCol === c.s ? "on" : ""} onClick={() => setMobileCol(c.s)}>
+            {c.label}
+            {c.list.length ? <span className="tab-count">{c.list.length}</span> : null}
+          </button>
+        ))}
       </div>
-      <div className="myorder-items">{order.items.map((it) => `${it.qty}× ${drinkName(it.drink)}`).join(", ")}</div>
-      <div className="track">
-        <i className={step >= 1 ? `on${step === 1 ? " now" : ""}` : ""} />
-        <i className={step >= 2 ? `on${step === 2 ? " now" : ""}` : ""} />
-        <i className={step >= 3 ? "on last" : ""} />
+
+      <div className="cols">
+        {cols.map((c) => (
+          <div key={c.s} className={`col${mobileCol === c.s ? " active" : ""}`}>
+            <div className="col-head">
+              <h2>{c.label}</h2>
+              <span className="count">{c.list.length}</span>
+            </div>
+            <div className="col-list">
+              {c.list.length === 0 && <p className="empty">{c.empty}</p>}
+              {c.list.map((o) => (
+                <OrderCard key={o.id} order={o} fresh={freshSet.has(o.id)} onStatus={setStatus} />
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
-      <div className="track-label">
-        <span style={{ color: order.status === "done" ? "var(--ok)" : "var(--peach)" }}>
-          {order.status === "done" ? `✓ ${formatLabel(order.tableLabel)} ${t("readyMsg")}` : statusLabel}
-        </span>
-        {order.status === "pending" &&
-          (confirm ? (
-            <button className="link-btn warn" onClick={onCancel}>
-              {t("cancelConfirm")}
-            </button>
-          ) : (
-            <button className="link-btn" onClick={() => { setConfirm(true); window.setTimeout(() => setConfirm(false), 3000); }}>
-              {t("cancelOrder")}
-            </button>
-          ))}
+    </>
+  );
+}
+
+function elapsed(ts: number) {
+  return Math.max(0, Math.floor((Date.now() - ts) / 60000));
+}
+
+function OrderCard({ order, fresh, onStatus }: { order: Order; fresh: boolean; onStatus: (id: string, s: OrderStatus) => void }) {
+  const { t, drinkName, formatLabel } = useI18n();
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const i = window.setInterval(() => tick((n) => n + 1), 30000);
+    return () => window.clearInterval(i);
+  }, []);
+
+  const mins = elapsed(order.createdAt);
+  const next: OrderStatus | null = order.status === "pending" ? "making" : order.status === "making" ? "done" : null;
+  const prev: OrderStatus | null = order.status === "done" ? "making" : order.status === "making" ? "pending" : null;
+  const isDone = order.status === "done";
+
+  const timerClass = isDone ? "idle" : mins >= 10 ? "late" : mins >= 5 ? "warn" : "";
+
+  return (
+    <article
+      className={`glass rim ocard${order.urgent && !isDone ? " urgent" : ""}${fresh ? " fresh" : ""}${isDone ? " finished" : ""}`}
+    >
+      <div className="ocard-top">
+        <h3>{formatLabel(order.tableLabel)}</h3>
+        <span className={`timer ${timerClass}`}>{mins} {t("minutes")}</span>
+      </div>
+      {order.urgent && !isDone && <span className="badge urgent" style={{ marginBottom: 10 }}>⚡ {t("urgent")}</span>}
+      <div>
+        {order.items.map((it, i) => (
+          <div className="oline" key={i}>
+            <DrinkArt drink={it.drink} cold={it.temp === "cold"} lessIce={it.lessIce} size={42} />
+            <div>
+              <div className="oline-name">
+                {it.qty > 1 && <b>{it.qty}×</b>}
+                {drinkName(it.drink)}
+              </div>
+              <div className="line-meta">
+                <span className={`tag ${it.temp}`}>{it.temp === "cold" ? t("cold") : t("hot")}</span>
+                {it.lessSweet && <span className="tag">{t("lessSweet")}</span>}
+                {it.lessIce && <span className="tag">{t("lessIce")}</span>}
+                {it.remarks && <span className="tag note">{it.remarks}</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="actions">
+        {prev && (
+          <button className="pill btn-ghost" onClick={() => onStatus(order.id, prev)}>
+            {t("undo")}
+          </button>
+        )}
+        {next && (
+          <button className="pill btn-foam" onClick={() => onStatus(order.id, next)}>
+            {order.status === "pending" ? t("start") : t("finish")}
+          </button>
+        )}
       </div>
     </article>
+  );
+}
+
+/* ---------------- floor ---------------- */
+
+function Floor({ config, onSaved }: { config: AppConfig; onSaved: () => void }) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState<TableSpot[] | null>(null);
+  const tables = draft ?? config.tables;
+
+  return (
+    <section className="floor-wrap">
+      <p className="muted">{t("editMapHint")}</p>
+      <TableMap tables={tables} mode="edit" onChange={setDraft} />
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <button
+          className="pill btn-foam"
+          disabled={!draft}
+          onClick={async () => { await backend.saveTables(draft ?? []); setDraft(null); onSaved(); }}
+        >
+          {t("saveMap")}
+        </button>
+        <button className="pill btn-ghost" onClick={() => setDraft([])}>
+          {t("clearMap")}
+        </button>
+        <span className="muted" style={{ marginLeft: "auto" }}>
+          {tables.length} {t("tablesCount")}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- menu ---------------- */
+
+function Menu({ config }: { config: AppConfig }) {
+  const { t, drinkName } = useI18n();
+  return (
+    <section>
+      <p className="muted" style={{ margin: "0 4px 16px" }}>
+        {t("menuHint")}
+      </p>
+      <div className="menu-grid">
+        {DRINKS.map((d) => {
+          const sold = Boolean(config.soldOut[d]);
+          return (
+            <div className="glass rim menu-item" key={d}>
+              <DrinkArt drink={d} size={48} />
+              <div className="grow">
+                <strong>{drinkName(d)}</strong>
+                <span className="muted" style={{ fontSize: "0.85rem" }}>
+                  {sold ? t("soldOut") : t("available")}
+                </span>
+              </div>
+              <button className={`switch${sold ? " danger" : ""}`} role="switch" aria-checked={sold} aria-label={drinkName(d)} onClick={() => backend.setSoldOut(d, !sold)} />
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- history ---------------- */
+
+function History({ orders, onEnded }: { orders: Order[]; onEnded: () => void }) {
+  const { t, drinkName, formatLabel } = useI18n();
+
+  const session = orders.filter((o) => !o.archived);
+  const past = orders.filter((o) => o.archived);
+  const drinkCount = (list: Order[]) => list.reduce((n, o) => n + o.items.reduce((m, it) => m + it.qty, 0), 0);
+
+  const counts = new Map<DrinkId, number>();
+  for (const o of orders) for (const it of o.items) counts.set(it.drink, (counts.get(it.drink) ?? 0) + it.qty);
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const max = top[0]?.[1] ?? 1;
+
+  const unfinished = session.filter((o) => o.status !== "done").length;
+
+  const endSession = async () => {
+    const msg = (unfinished > 0 ? t("endSessionUnfinished") + "\n\n" : "") + t("endSessionConfirm");
+    if (window.confirm(msg)) {
+      await backend.endSession();
+      onEnded();
+    }
+  };
+
+  const renderItem = (o: Order) => (
+    <div className={`glass hist-item${o.archived ? " old" : ""}`} key={o.id}>
+      <div className="row">
+        <strong style={{ fontFamily: "var(--font-display)", fontWeight: 500 }}>{formatLabel(o.tableLabel)}</strong>
+        <span className="muted" style={{ fontSize: "0.82rem" }}>
+          {new Date(o.createdAt).toLocaleString("en-MY", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+        </span>
+      </div>
+      <div className="muted" style={{ marginTop: 4 }}>
+        {o.items.map((it) => `${it.qty}× ${drinkName(it.drink)}${it.temp === "cold" ? " ❄" : ""}`).join(", ")}
+        {o.urgent && " ⚡"}
+      </div>
+    </div>
+  );
+
+  return (
+    <section>
+      <div className="stats">
+        <div className="glass rim stat mint">
+          <strong>{session.length}</strong>
+          <span>{t("statSessionOrders")}</span>
+        </div>
+        <div className="glass rim stat mint">
+          <strong>{drinkCount(session)}</strong>
+          <span>{t("statSessionDrinks")}</span>
+        </div>
+        <div className="glass rim stat">
+          <strong>{orders.length}</strong>
+          <span>{t("statAllOrders")}</span>
+        </div>
+        <div className="glass rim stat">
+          <strong>{drinkCount(orders)}</strong>
+          <span>{t("statAllDrinks")}</span>
+        </div>
+      </div>
+
+      {top.length > 0 && (
+        <div className="glass rim panel" style={{ marginBottom: 16 }}>
+          <h2 className="h2">{t("popular")}</h2>
+          <div className="bars">
+            {top.map(([d, n]) => (
+              <div className="bar-row" key={d}>
+                <DrinkArt drink={d} size={34} />
+                <div className="bar-track">
+                  <i style={{ width: `${(n / max) * 100}%` }} />
+                </div>
+                <span style={{ fontWeight: 700, textAlign: "right" }}>{n}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="hist-actions">
+        <button className="pill btn-foam" onClick={() => downloadCsv(orders)} disabled={orders.length === 0}>
+          {t("downloadCsv")}
+        </button>
+        <button className="pill btn-ghost" onClick={endSession} disabled={session.length === 0}>
+          {t("endSession")}
+        </button>
+      </div>
+
+      <h2 className="hist-day">{t("thisSession")}</h2>
+      {session.length === 0 && <p className="empty">{t("nothingYet")}</p>}
+      <div className="hist-list">{[...session].reverse().map(renderItem)}</div>
+
+      {past.length > 0 && (
+        <>
+          <h2 className="hist-day">{t("earlierSessions")}</h2>
+          <div className="hist-list">{[...past].reverse().map(renderItem)}</div>
+        </>
+      )}
+    </section>
   );
 }

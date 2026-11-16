@@ -14,6 +14,8 @@
   --urgent: #ff5d73;
   --ok: #9be3b1;
   --cold: #9cc9ff;
+  --matcha: #b9dcab;
+  --matcha-deep: #6f9e63;
 
   --glass: rgba(22, 15, 11, 0.58);
   --glass-hi: rgba(34, 24, 17, 0.78);
@@ -503,6 +505,13 @@ textarea.field {
   margin-right: 0.22em;
   animation: word-in 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   animation-delay: calc(var(--base) + var(--i) * 90ms);
+}
+
+.hero-title .w:last-of-type {
+  background: linear-gradient(100deg, var(--peach) 10%, var(--matcha) 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .hero-sub {
@@ -1326,11 +1335,13 @@ textarea.field {
   padding: 1px 9px;
   border-radius: 99px;
   font-size: 0.78rem;
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(185, 220, 171, 0.16);
+  color: var(--matcha);
 }
 
 .seg button.on .tab-count {
   background: rgba(34, 20, 10, 0.2);
+  color: inherit;
 }
 
 /* kanban */
@@ -1574,6 +1585,10 @@ textarea.field {
   font-size: 0.9rem;
 }
 
+.stat.mint strong {
+  color: var(--matcha);
+}
+
 .bars {
   display: grid;
   gap: 10px;
@@ -1597,7 +1612,7 @@ textarea.field {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--foam);
+  background: linear-gradient(90deg, var(--peach) 0%, var(--matcha) 100%);
   transform-origin: left;
   animation: grow 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -1643,7 +1658,7 @@ textarea.field {
 
 @media (min-width: 700px) {
   .stats {
-    grid-template-columns: repeat(2, 1fr);
-    max-width: 520px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    max-width: 860px;
   }
 }

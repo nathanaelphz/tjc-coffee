@@ -68,7 +68,8 @@ export interface Backend {
   addOrder(o: NewOrder): Promise<string>;
   updateOrder(id: string, patch: Partial<Omit<Order, "id">>): Promise<void>;
   removeOrder(id: string): Promise<void>;
-  archiveCompleted(): Promise<void>;
+  /** Archives every live order, so the board and the session counters start fresh. */
+  endSession(): Promise<void>;
   subscribeConfig(cb: (cfg: AppConfig) => void): () => void;
   saveTables(tables: TableSpot[]): Promise<void>;
   setSoldOut(drink: DrinkId, v: boolean): Promise<void>;
@@ -105,11 +106,9 @@ export const backend: Backend = {
     await deleteDoc(doc(requireFirebase(), "orders", id));
   },
 
-  async archiveCompleted() {
+  async endSession() {
     const db = requireFirebase();
-    const snap = await getDocs(
-      query(collection(db, "orders"), where("archived", "==", false), where("status", "==", "done"))
-    );
+    const snap = await getDocs(query(collection(db, "orders"), where("archived", "==", false)));
     const batch = writeBatch(db);
     snap.docs.forEach((d) => batch.update(d.ref, { archived: true }));
     await batch.commit();
