@@ -37,7 +37,15 @@ export default function BaristaPage() {
         }}
       />
     );
-  return <Board onLogout={() => { window.sessionStorage.removeItem(AUTH_KEY); setAuthed(false); }} />;
+  // Log out = leave the barista area entirely, back to the waiter page.
+  return (
+    <Board
+      onLogout={() => {
+        window.sessionStorage.removeItem(AUTH_KEY);
+        window.location.href = "/";
+      }}
+    />
+  );
 }
 
 /* ---------------- login ---------------- */
@@ -197,7 +205,7 @@ function Board({ onLogout }: { onLogout: () => void }) {
       {tab === "orders" && <OrdersBoard orders={live} freshSet={fresh.current} />}
       {tab === "floor" && <Floor config={config} onSaved={() => showToast(t("mapSaved"))} />}
       {tab === "menu" && <Menu config={config} />}
-      {tab === "history" && <History orders={orders} onArchived={() => showToast(t("archived"))} />}
+      {tab === "history" && <History orders={orders} onEnded={() => showToast(t("sessionEnded"))} />}
 
       {toast && <div className="toast">{toast}</div>}
     </div>
@@ -383,32 +391,61 @@ function Menu({ config }: { config: AppConfig }) {
 
 /* ---------------- history ---------------- */
 
-function History({ orders, onArchived }: { orders: Order[]; onArchived: () => void }) {
+function History({ orders, onEnded }: { orders: Order[]; onEnded: () => void }) {
   const { t, drinkName, formatLabel } = useI18n();
 
-  const drinkTotal = orders.reduce((n, o) => n + o.items.reduce((m, it) => m + it.qty, 0), 0);
+  const session = orders.filter((o) => !o.archived);
+  const past = orders.filter((o) => o.archived);
+  const drinkCount = (list: Order[]) => list.reduce((n, o) => n + o.items.reduce((m, it) => m + it.qty, 0), 0);
+
   const counts = new Map<DrinkId, number>();
   for (const o of orders) for (const it of o.items) counts.set(it.drink, (counts.get(it.drink) ?? 0) + it.qty);
   const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
   const max = top[0]?.[1] ?? 1;
 
+  const unfinished = session.filter((o) => o.status !== "done").length;
+
   const endSession = async () => {
-    if (window.confirm(t("endSessionConfirm"))) {
-      await backend.archiveCompleted();
-      onArchived();
+    const msg = (unfinished > 0 ? t("endSessionUnfinished") + "\n\n" : "") + t("endSessionConfirm");
+    if (window.confirm(msg)) {
+      await backend.endSession();
+      onEnded();
     }
   };
+
+  const renderItem = (o: Order) => (
+    <div className={`glass hist-item${o.archived ? " old" : ""}`} key={o.id}>
+      <div className="row">
+        <strong style={{ fontFamily: "var(--font-display)", fontWeight: 500 }}>{formatLabel(o.tableLabel)}</strong>
+        <span className="muted" style={{ fontSize: "0.82rem" }}>
+          {new Date(o.createdAt).toLocaleString("en-MY", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+        </span>
+      </div>
+      <div className="muted" style={{ marginTop: 4 }}>
+        {o.items.map((it) => `${it.qty}× ${drinkName(it.drink)}${it.temp === "cold" ? " ❄" : ""}`).join(", ")}
+        {o.urgent && " ⚡"}
+      </div>
+    </div>
+  );
 
   return (
     <section>
       <div className="stats">
-        <div className="glass rim stat">
-          <strong>{orders.length}</strong>
-          <span>{t("statOrders")}</span>
+        <div className="glass rim stat mint">
+          <strong>{session.length}</strong>
+          <span>{t("statSessionOrders")}</span>
+        </div>
+        <div className="glass rim stat mint">
+          <strong>{drinkCount(session)}</strong>
+          <span>{t("statSessionDrinks")}</span>
         </div>
         <div className="glass rim stat">
-          <strong>{drinkTotal}</strong>
-          <span>{t("statDrinks")}</span>
+          <strong>{orders.length}</strong>
+          <span>{t("statAllOrders")}</span>
+        </div>
+        <div className="glass rim stat">
+          <strong>{drinkCount(orders)}</strong>
+          <span>{t("statAllDrinks")}</span>
         </div>
       </div>
 
@@ -433,31 +470,21 @@ function History({ orders, onArchived }: { orders: Order[]; onArchived: () => vo
         <button className="pill btn-foam" onClick={() => downloadCsv(orders)} disabled={orders.length === 0}>
           {t("downloadCsv")}
         </button>
-        <button className="pill btn-ghost" onClick={endSession} disabled={!orders.some((o) => o.status === "done" && !o.archived)}>
+        <button className="pill btn-ghost" onClick={endSession} disabled={session.length === 0}>
           {t("endSession")}
         </button>
       </div>
 
-      <h2 className="h2" style={{ margin: "0 4px 10px" }}>
-        {t("allOrders")}
-      </h2>
-      {orders.length === 0 && <p className="empty">{t("nothingYet")}</p>}
-      <div className="hist-list">
-        {[...orders].reverse().map((o) => (
-          <div className={`glass hist-item${o.archived ? " old" : ""}`} key={o.id}>
-            <div className="row">
-              <strong style={{ fontFamily: "var(--font-display)", fontWeight: 500 }}>{formatLabel(o.tableLabel)}</strong>
-              <span className="muted" style={{ fontSize: "0.82rem" }}>
-                {new Date(o.createdAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
-              </span>
-            </div>
-            <div className="muted" style={{ marginTop: 4 }}>
-              {o.items.map((it) => `${it.qty}× ${drinkName(it.drink)}${it.temp === "cold" ? " ❄" : ""}`).join(", ")}
-              {o.urgent && " ⚡"}
-            </div>
-          </div>
-        ))}
-      </div>
+      <h2 className="hist-day">{t("thisSession")}</h2>
+      {session.length === 0 && <p className="empty">{t("nothingYet")}</p>}
+      <div className="hist-list">{[...session].reverse().map(renderItem)}</div>
+
+      {past.length > 0 && (
+        <>
+          <h2 className="hist-day">{t("earlierSessions")}</h2>
+          <div className="hist-list">{[...past].reverse().map(renderItem)}</div>
+        </>
+      )}
     </section>
   );
 }
