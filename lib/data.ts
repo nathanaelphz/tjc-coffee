@@ -70,6 +70,10 @@ export interface Backend {
   removeOrder(id: string): Promise<void>;
   /** Archives every live order, so the board and the session counters start fresh. */
   endSession(): Promise<void>;
+  /** Permanently deletes this session's (unarchived) orders. */
+  clearSession(): Promise<void>;
+  /** Permanently deletes every order, history included. */
+  clearAll(): Promise<void>;
   subscribeConfig(cb: (cfg: AppConfig) => void): () => void;
   saveTables(tables: TableSpot[]): Promise<void>;
   setSoldOut(drink: DrinkId, v: boolean): Promise<void>;
@@ -111,6 +115,22 @@ export const backend: Backend = {
     const snap = await getDocs(query(collection(db, "orders"), where("archived", "==", false)));
     const batch = writeBatch(db);
     snap.docs.forEach((d) => batch.update(d.ref, { archived: true }));
+    await batch.commit();
+  },
+
+  async clearSession() {
+    const db = requireFirebase();
+    const snap = await getDocs(query(collection(db, "orders"), where("archived", "==", false)));
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  },
+
+  async clearAll() {
+    const db = requireFirebase();
+    const snap = await getDocs(collection(db, "orders"));
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => batch.delete(d.ref));
     await batch.commit();
   },
 

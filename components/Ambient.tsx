@@ -1,160 +1,544 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  DRINKS,
+  EMPTY_CONFIG,
+  type AppConfig,
+  type DrinkId,
+  type Order,
+  type OrderStatus,
+  type TableSpot,
+} from "@/lib/types";
+import { backend, downloadCsv } from "@/lib/data";
+import { useI18n, LangToggle } from "@/lib/i18n";
+import TopBar, { Mark } from "@/components/TopBar";
+import StatusBar from "@/components/StatusBar";
+import TableMap from "@/components/TableMap";
+import DrinkArt from "@/components/DrinkArt";
 
-/**
- * Slow, flowing crema-and-roast background, drawn with a small WebGL shader.
- * Runs at half resolution and ~30fps, pauses when the tab is hidden, and draws
- * a single still frame when the device asks for reduced motion.
- */
+const PIN = process.env.NEXT_PUBLIC_BARISTA_PIN || "1234";
+const AUTH_KEY = "tjc-barista-ok";
 
-const VERT = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }`;
-
-const FRAG = `
-precision mediump float;
-uniform vec2 r;
-uniform float t;
-uniform vec2 m;
-
-float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float n(vec2 p){
-  vec2 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(h(i), h(i + vec2(1.0, 0.0)), f.x),
-             mix(h(i + vec2(0.0, 1.0)), h(i + vec2(1.0, 1.0)), f.x), f.y);
-}
-float fbm(vec2 p){
-  float v = 0.0, a = 0.5;
-  for (int i = 0; i < 4; i++){ v += a * n(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; }
-  return v;
-}
-
-void main(){
-  vec2 uv = gl_FragCoord.xy / r;
-  vec2 p = (gl_FragCoord.xy - 0.5 * r) / min(r.x, r.y);
-  float tt = t * 0.05;
-
-  vec2 q = vec2(fbm(p * 1.3 + tt), fbm(p * 1.3 + vec2(5.2, 1.3) - tt));
-  vec2 w = vec2(fbm(p * 1.5 + 2.0 * q + vec2(1.7, 9.2) + 0.8 * tt),
-                fbm(p * 1.5 + 2.0 * q + vec2(8.3, 2.8) - 0.7 * tt));
-  float f = fbm(p * 1.1 + 2.3 * w);
-
-  vec3 c0 = vec3(0.024, 0.016, 0.012);
-  vec3 c1 = vec3(0.16, 0.08, 0.04);
-  vec3 c2 = vec3(0.78, 0.45, 0.20);
-  vec3 c3 = vec3(0.98, 0.88, 0.76);
-
-  vec3 col = mix(c0, c1, smoothstep(0.22, 0.66, f));
-  col = mix(col, c2, smoothstep(0.58, 0.92, f) * 0.5);
-  col = mix(col, c3, smoothstep(0.8, 1.0, f * f * 1.25) * 0.22);
-
-  float d = length(uv - m);
-  col += vec3(0.95, 0.58, 0.28) * 0.07 * exp(-d * 5.0);
-
-  float v = smoothstep(1.2, 0.15, length(uv - vec2(0.5, 0.7)));
-  col *= 0.28 + 0.72 * v;
-
-  gl_FragColor = vec4(col, 1.0);
-}`;
-
-export default function Ambient() {
-  const ref = useRef<HTMLCanvasElement>(null);
+export default function BaristaPage() {
+  const [authed, setAuthed] = useState<boolean | null>(null);
 
   useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const gl = canvas.getContext("webgl", { antialias: false, powerPreference: "low-power" });
-    if (!gl) {
-      canvas.style.display = "none";
-      return;
-    }
-
-    const compile = (type: number, src: string) => {
-      const s = gl.createShader(type)!;
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      return s;
-    };
-    const prog = gl.createProgram()!;
-    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      canvas.style.display = "none";
-      return;
-    }
-    gl.useProgram(prog);
-
-    const buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const loc = gl.getAttribLocation(prog, "p");
-    gl.enableVertexAttribArray(loc);
-    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-
-    const uR = gl.getUniformLocation(prog, "r");
-    const uT = gl.getUniformLocation(prog, "t");
-    const uM = gl.getUniformLocation(prog, "m");
-
-    const SCALE = 0.5;
-    const resize = () => {
-      canvas.width = Math.max(2, Math.floor(window.innerWidth * SCALE));
-      canvas.height = Math.max(2, Math.floor(window.innerHeight * SCALE));
-      gl.viewport(0, 0, canvas.width, canvas.height);
-    };
-    resize();
-    window.addEventListener("resize", resize);
-
-    const target = [0.5, 0.65];
-    const mouse = [0.5, 0.65];
-    const onMove = (e: PointerEvent) => {
-      target[0] = e.clientX / window.innerWidth;
-      target[1] = 1 - e.clientY / window.innerHeight;
-    };
-    window.addEventListener("pointermove", onMove, { passive: true });
-
-    const draw = (seconds: number) => {
-      mouse[0] += (target[0] - mouse[0]) * 0.06;
-      mouse[1] += (target[1] - mouse[1]) * 0.06;
-      gl.uniform2f(uR, canvas.width, canvas.height);
-      gl.uniform1f(uT, seconds);
-      gl.uniform2f(uM, mouse[0], mouse[1]);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-    };
-
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let raf = 0;
-    let last = 0;
-    const start = performance.now();
-
-    const frame = (now: number) => {
-      raf = requestAnimationFrame(frame);
-      if (now - last < 33) return;
-      last = now;
-      draw((now - start) / 1000 + 20);
-    };
-
-    const onVisibility = () => {
-      if (reduce) return;
-      cancelAnimationFrame(raf);
-      if (!document.hidden) raf = requestAnimationFrame(frame);
-    };
-
-    if (reduce) {
-      draw(30);
-      window.addEventListener("resize", () => draw(30));
-    } else {
-      raf = requestAnimationFrame(frame);
-      document.addEventListener("visibilitychange", onVisibility);
-    }
-
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
-      window.removeEventListener("pointermove", onMove);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
+    setAuthed(window.sessionStorage.getItem(AUTH_KEY) === "1");
   }, []);
 
-  return <canvas ref={ref} className="ambient" aria-hidden />;
+  if (authed === null) return null;
+  if (!authed)
+    return (
+      <Login
+        onOk={() => {
+          window.sessionStorage.setItem(AUTH_KEY, "1");
+          setAuthed(true);
+        }}
+      />
+    );
+  // Log out = leave the barista area entirely, back to the waiter page.
+  return (
+    <Board
+      onLogout={() => {
+        window.sessionStorage.removeItem(AUTH_KEY);
+        window.location.href = "/";
+      }}
+    />
+  );
+}
+
+/* ---------------- login ---------------- */
+
+function Login({ onOk }: { onOk: () => void }) {
+  const { t } = useI18n();
+  const [pin, setPin] = useState("");
+  const [bad, setBad] = useState(false);
+
+  const push = (d: string) => {
+    if (pin.length >= 4) return;
+    const next = pin + d;
+    setPin(next);
+    if (next.length === 4) {
+      if (next === PIN) window.setTimeout(onOk, 150);
+      else window.setTimeout(() => { setBad(true); setPin(""); }, 150);
+    }
+  };
+
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "←"];
+
+  return (
+    <main className="login">
+      <div className="login-card glass">
+        <Mark size={44} />
+        <h1>{t("loginTitle")}</h1>
+        <p className="muted">{t("enterPin")}</p>
+        <div className={`dots${bad ? " bad" : ""}`}>
+          {[0, 1, 2, 3].map((i) => (
+            <i key={i} className={i < pin.length ? "on" : ""} />
+          ))}
+        </div>
+        <p className="err">{bad ? t("wrongPin") : ""}</p>
+        <div className="keypad">
+          {keys.map((k, i) =>
+            k === "" ? (
+              <span key={i} />
+            ) : (
+              <button
+                key={i}
+                className={`key${k === "←" ? " ghost" : ""}`}
+                onClick={() => { setBad(false); k === "←" ? setPin(pin.slice(0, -1)) : push(k); }}
+              >
+                {k}
+              </button>
+            )
+          )}
+        </div>
+        <a href="/" className="link-btn" style={{ display: "inline-block", marginTop: 20 }}>
+          ← {t("backToOrder")}
+        </a>
+      </div>
+    </main>
+  );
+}
+
+/* ---------------- sound ---------------- */
+
+function chime() {
+  try {
+    const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AC();
+    [880, 1320].forEach((f, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.type = "sine";
+      o.frequency.value = f;
+      const s = ctx.currentTime + i * 0.12;
+      g.gain.setValueAtTime(0.0001, s);
+      g.gain.exponentialRampToValueAtTime(0.18, s + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, s + 0.5);
+      o.start(s);
+      o.stop(s + 0.5);
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ---------------- board ---------------- */
+
+type Tab = "orders" | "floor" | "menu" | "history";
+
+function Board({ onLogout }: { onLogout: () => void }) {
+  const { t, drinkName } = useI18n();
+  const [tab, setTab] = useState<Tab>("orders");
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [config, setConfig] = useState<AppConfig>(EMPTY_CONFIG);
+  const [sound, setSound] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
+  const prevIds = useRef<Set<string> | null>(null);
+  const fresh = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const u1 = backend.subscribeOrders((list) => {
+      const ids = new Set(list.filter((o) => !o.archived).map((o) => o.id));
+      if (prevIds.current) {
+        for (const id of ids)
+          if (!prevIds.current.has(id)) {
+            fresh.current.add(id);
+            if (sound) chime();
+            window.setTimeout(() => fresh.current.delete(id), 1800);
+          }
+      }
+      prevIds.current = ids;
+      setOrders(list);
+    });
+    const u2 = backend.subscribeConfig(setConfig);
+    return () => { u1(); u2(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sound]);
+
+  const showToast = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 2200); };
+  const live = useMemo(() => orders.filter((o) => !o.archived), [orders]);
+
+  const tabs: { id: Tab; label: string; n?: number }[] = [
+    { id: "orders", label: t("tabOrders"), n: live.filter((o) => o.status !== "done").length },
+    { id: "floor", label: t("tabFloor") },
+    { id: "menu", label: t("tabMenu") },
+    { id: "history", label: t("tabHistory") },
+  ];
+
+  return (
+    <div className="page">
+      <TopBar>
+        <LangToggle />
+        <button className="icon-btn" onClick={() => setSound((s) => !s)} aria-label={sound ? t("soundOn") : t("soundOff")} aria-pressed={sound}>
+          {sound ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 5 6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14" />
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 5 6 9H2v6h4l5 4zM22 9l-6 6M16 9l6 6" />
+            </svg>
+          )}
+        </button>
+        <button className="pill btn-ghost" style={{ minHeight: 42, padding: "0 16px", fontSize: "0.9rem" }} onClick={onLogout}>
+          {t("logout")}
+        </button>
+      </TopBar>
+
+      <StatusBar />
+      <h1 className="board-title">{t("baristaTitle")}</h1>
+
+      <div className="seg tabs" role="tablist">
+        {tabs.map((x) => (
+          <button key={x.id} className={tab === x.id ? "on" : ""} role="tab" aria-selected={tab === x.id} onClick={() => setTab(x.id)}>
+            {x.label}
+            {x.n ? <span className="tab-count">{x.n}</span> : null}
+          </button>
+        ))}
+      </div>
+
+      {tab === "orders" && <OrdersBoard orders={live} freshSet={fresh.current} />}
+      {tab === "floor" && <Floor config={config} onSaved={() => showToast(t("mapSaved"))} />}
+      {tab === "menu" && <Menu config={config} />}
+      {tab === "history" && <History orders={orders} notify={showToast} />}
+
+      {toast && <div className="toast">{toast}</div>}
+    </div>
+  );
+}
+
+/* ---------------- orders kanban ---------------- */
+
+function OrdersBoard({ orders, freshSet }: { orders: Order[]; freshSet: Set<string> }) {
+  const { t } = useI18n();
+  const [mobileCol, setMobileCol] = useState<OrderStatus>("pending");
+
+  const byStatus = (s: OrderStatus) =>
+    orders
+      .filter((o) => o.status === s)
+      .sort((a, b) => Number(b.urgent) - Number(a.urgent) || a.createdAt - b.createdAt);
+
+  const pending = byStatus("pending");
+  const making = byStatus("making");
+  const done = byStatus("done").reverse();
+
+  const cols: { s: OrderStatus; label: string; list: Order[]; empty: string }[] = [
+    { s: "pending", label: t("pending"), list: pending, empty: t("emptyWaiting") },
+    { s: "making", label: t("making"), list: making, empty: t("emptyMaking") },
+    { s: "done", label: t("done"), list: done, empty: t("emptyDone") },
+  ];
+
+  const setStatus = (id: string, status: OrderStatus) => backend.updateOrder(id, { status });
+
+  return (
+    <>
+      <div className="seg col-tabs">
+        {cols.map((c) => (
+          <button key={c.s} className={mobileCol === c.s ? "on" : ""} onClick={() => setMobileCol(c.s)}>
+            {c.label}
+            {c.list.length ? <span className="tab-count">{c.list.length}</span> : null}
+          </button>
+        ))}
+      </div>
+
+      <div className="cols">
+        {cols.map((c) => (
+          <div key={c.s} className={`col${mobileCol === c.s ? " active" : ""}`}>
+            <div className="col-head">
+              <h2>{c.label}</h2>
+              <span className="count">{c.list.length}</span>
+            </div>
+            <div className="col-list">
+              {c.list.length === 0 && <p className="empty">{c.empty}</p>}
+              {c.list.map((o) => (
+                <OrderCard key={o.id} order={o} fresh={freshSet.has(o.id)} onStatus={setStatus} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function elapsed(ts: number) {
+  return Math.max(0, Math.floor((Date.now() - ts) / 60000));
+}
+
+function OrderCard({ order, fresh, onStatus }: { order: Order; fresh: boolean; onStatus: (id: string, s: OrderStatus) => void }) {
+  const { t, drinkName, formatLabel } = useI18n();
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const i = window.setInterval(() => tick((n) => n + 1), 30000);
+    return () => window.clearInterval(i);
+  }, []);
+
+  const mins = elapsed(order.createdAt);
+  const next: OrderStatus | null = order.status === "pending" ? "making" : order.status === "making" ? "done" : null;
+  const prev: OrderStatus | null = order.status === "done" ? "making" : order.status === "making" ? "pending" : null;
+  const isDone = order.status === "done";
+
+  const timerClass = isDone ? "idle" : mins >= 10 ? "late" : mins >= 5 ? "warn" : "";
+
+  return (
+    <article
+      className={`glass rim ocard${order.urgent && !isDone ? " urgent" : ""}${fresh ? " fresh" : ""}${isDone ? " finished" : ""}`}
+    >
+      <div className="ocard-top">
+        <h3>{formatLabel(order.tableLabel)}</h3>
+        <span className={`timer ${timerClass}`}>{mins} {t("minutes")}</span>
+      </div>
+      {order.urgent && !isDone && <span className="badge urgent" style={{ marginBottom: 10 }}>⚡ {t("urgent")}</span>}
+      <div>
+        {order.items.map((it, i) => (
+          <div className="oline" key={i}>
+            <DrinkArt drink={it.drink} cold={it.temp === "cold"} lessIce={it.lessIce} size={42} />
+            <div>
+              <div className="oline-name">
+                {it.qty > 1 && <b>{it.qty}×</b>}
+                {drinkName(it.drink)}
+              </div>
+              <div className="line-meta">
+                <span className={`tag ${it.temp}`}>{it.temp === "cold" ? t("cold") : t("hot")}</span>
+                {it.lessSweet && <span className="tag">{t("lessSweet")}</span>}
+                {it.lessIce && <span className="tag">{t("lessIce")}</span>}
+                {it.remarks && <span className="tag note">{it.remarks}</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="actions">
+        {prev && (
+          <button className="pill btn-ghost" onClick={() => onStatus(order.id, prev)}>
+            {t("undo")}
+          </button>
+        )}
+        {next && (
+          <button className="pill btn-foam" onClick={() => onStatus(order.id, next)}>
+            {order.status === "pending" ? t("start") : t("finish")}
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+/* ---------------- floor ---------------- */
+
+function Floor({ config, onSaved }: { config: AppConfig; onSaved: () => void }) {
+  const { t } = useI18n();
+  const [draft, setDraft] = useState<TableSpot[] | null>(null);
+  const tables = draft ?? config.tables;
+
+  return (
+    <section className="floor-wrap">
+      <p className="muted">{t("editMapHint")}</p>
+      <TableMap tables={tables} mode="edit" onChange={setDraft} />
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <button
+          className="pill btn-foam"
+          disabled={!draft}
+          onClick={async () => { await backend.saveTables(draft ?? []); setDraft(null); onSaved(); }}
+        >
+          {t("saveMap")}
+        </button>
+        <button className="pill btn-ghost" onClick={() => setDraft([])}>
+          {t("clearMap")}
+        </button>
+        <span className="muted" style={{ marginLeft: "auto" }}>
+          {tables.length} {t("tablesCount")}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- menu ---------------- */
+
+function Menu({ config }: { config: AppConfig }) {
+  const { t, drinkName } = useI18n();
+  return (
+    <section>
+      <p className="muted" style={{ margin: "0 4px 16px" }}>
+        {t("menuHint")}
+      </p>
+      <div className="menu-grid">
+        {DRINKS.map((d) => {
+          const sold = Boolean(config.soldOut[d]);
+          return (
+            <div className="glass rim menu-item" key={d}>
+              <DrinkArt drink={d} size={48} />
+              <div className="grow">
+                <strong>{drinkName(d)}</strong>
+                <span className="muted" style={{ fontSize: "0.85rem" }}>
+                  {sold ? t("soldOut") : t("available")}
+                </span>
+              </div>
+              <button className={`switch${sold ? " danger" : ""}`} role="switch" aria-checked={sold} aria-label={drinkName(d)} onClick={() => backend.setSoldOut(d, !sold)} />
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- history ---------------- */
+
+const DAY_LOCALE = { en: "en-MY", zh: "zh-CN", ms: "ms-MY" } as const;
+
+function History({ orders, notify }: { orders: Order[]; notify: (msg: string) => void }) {
+  const { t, lang, drinkName, formatLabel } = useI18n();
+
+  const session = orders.filter((o) => !o.archived);
+  const past = orders.filter((o) => o.archived);
+
+  // Earlier sessions, grouped by day, newest day first.
+  const days: { key: string; label: string; list: Order[] }[] = [];
+  for (const o of [...past].reverse()) {
+    const d = new Date(o.createdAt);
+    const key = d.toDateString();
+    let g = days.find((x) => x.key === key);
+    if (!g) {
+      g = {
+        key,
+        label: d.toLocaleDateString(DAY_LOCALE[lang], { weekday: "long", day: "numeric", month: "short", year: "numeric" }),
+        list: [],
+      };
+      days.push(g);
+    }
+    g.list.push(o);
+  }
+  for (const g of days) g.list.sort((a, b) => b.createdAt - a.createdAt);
+  days.sort((a, b) => b.list[0].createdAt - a.list[0].createdAt);
+  const drinkCount = (list: Order[]) => list.reduce((n, o) => n + o.items.reduce((m, it) => m + it.qty, 0), 0);
+
+  const counts = new Map<DrinkId, number>();
+  for (const o of orders) for (const it of o.items) counts.set(it.drink, (counts.get(it.drink) ?? 0) + it.qty);
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const max = top[0]?.[1] ?? 1;
+
+  const unfinished = session.filter((o) => o.status !== "done").length;
+
+  const endSession = async () => {
+    const msg = (unfinished > 0 ? t("endSessionUnfinished") + "\n\n" : "") + t("endSessionConfirm");
+    if (window.confirm(msg)) {
+      await backend.endSession();
+      notify(t("sessionEnded"));
+    }
+  };
+
+  const clearSession = async () => {
+    if (window.confirm(t("clearSessionConfirm"))) {
+      await backend.clearSession();
+      notify(t("cleared"));
+    }
+  };
+
+  const clearAll = async () => {
+    if (window.confirm(t("clearAllConfirm")) && window.confirm(t("clearAllConfirm2"))) {
+      await backend.clearAll();
+      notify(t("cleared"));
+    }
+  };
+
+  const renderItem = (o: Order) => (
+    <div className={`glass hist-item${o.archived ? " old" : ""}`} key={o.id}>
+      <div className="row">
+        <strong style={{ fontFamily: "var(--font-display)", fontWeight: 500 }}>{formatLabel(o.tableLabel)}</strong>
+        <span className="muted" style={{ fontSize: "0.82rem" }}>
+          {new Date(o.createdAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
+        </span>
+      </div>
+      <div className="muted" style={{ marginTop: 4 }}>
+        {o.items.map((it) => `${it.qty}× ${drinkName(it.drink)}${it.temp === "cold" ? " ❄" : ""}`).join(", ")}
+        {o.urgent && " ⚡"}
+      </div>
+    </div>
+  );
+
+  return (
+    <section>
+      <div className="stats">
+        <div className="glass rim stat mint">
+          <strong>{session.length}</strong>
+          <span>{t("statSessionOrders")}</span>
+        </div>
+        <div className="glass rim stat mint">
+          <strong>{drinkCount(session)}</strong>
+          <span>{t("statSessionDrinks")}</span>
+        </div>
+        <div className="glass rim stat">
+          <strong>{orders.length}</strong>
+          <span>{t("statAllOrders")}</span>
+        </div>
+        <div className="glass rim stat">
+          <strong>{drinkCount(orders)}</strong>
+          <span>{t("statAllDrinks")}</span>
+        </div>
+      </div>
+
+      {top.length > 0 && (
+        <div className="glass rim panel" style={{ marginBottom: 16 }}>
+          <h2 className="h2">{t("popular")}</h2>
+          <div className="bars">
+            {top.map(([d, n]) => (
+              <div className="bar-row" key={d}>
+                <DrinkArt drink={d} size={34} />
+                <div className="bar-track">
+                  <i style={{ width: `${(n / max) * 100}%` }} />
+                </div>
+                <span style={{ fontWeight: 700, textAlign: "right" }}>{n}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="hist-actions">
+        <button className="pill btn-foam" onClick={() => downloadCsv(orders)} disabled={orders.length === 0}>
+          {t("downloadCsv")}
+        </button>
+        <button className="pill btn-ghost" onClick={endSession} disabled={session.length === 0}>
+          {t("endSession")}
+        </button>
+        <button className="pill btn-danger" onClick={clearSession} disabled={session.length === 0}>
+          {t("clearSession")}
+        </button>
+        <button className="pill btn-danger" onClick={clearAll} disabled={orders.length === 0}>
+          {t("clearAll")}
+        </button>
+      </div>
+
+      <h2 className="hist-day">{t("thisSession")}</h2>
+      {session.length === 0 && <p className="empty">{t("nothingYet")}</p>}
+      <div className="hist-list">{[...session].reverse().map(renderItem)}</div>
+
+      {days.length > 0 && (
+        <>
+          <h2 className="hist-day">{t("earlierSessions")}</h2>
+          <div className="day-groups">
+            {days.map((g, i) => (
+              <details className="glass rim day-group" key={g.key} open={i === 0}>
+                <summary>
+                  <span className="day-label">{g.label}</span>
+                  <span className="tab-count">{g.list.length} {t("ordersN")}</span>
+                  <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </summary>
+                <div className="hist-list">{g.list.map(renderItem)}</div>
+              </details>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
 }

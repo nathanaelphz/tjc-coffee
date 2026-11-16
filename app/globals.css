@@ -5,10 +5,10 @@
    ========================================================================== */
 
 :root {
-  --bg: #060606;
-  --ink: #f6efe6;
-  --ink-dim: #cdbba6;
-  --ink-faint: #9c8a76;
+  --bg: #171009;
+  --ink: #faf4ea;
+  --ink-dim: #dbccb7;
+  --ink-faint: #ad9c88;
   --peach: #f2b783;
   --peach-deep: #cf8a4c;
   --urgent: #ff5d73;
@@ -17,10 +17,10 @@
   --matcha: #b9dcab;
   --matcha-deep: #6f9e63;
 
-  --glass: rgba(22, 15, 11, 0.58);
-  --glass-hi: rgba(34, 24, 17, 0.78);
-  --rim: rgba(255, 255, 255, 0.14);
-  --line: rgba(255, 255, 255, 0.09);
+  --glass: rgba(56, 40, 28, 0.5);
+  --glass-hi: rgba(70, 50, 35, 0.72);
+  --rim: rgba(255, 255, 255, 0.18);
+  --line: rgba(255, 255, 255, 0.12);
 
   --foam: linear-gradient(105deg, #e7e5f7 0%, #fbe5d4 38%, #f5cfa9 68%, #d8dcf8 100%);
 
@@ -266,6 +266,25 @@ a {
   border-radius: inherit;
   border: 1px solid var(--rim);
   pointer-events: none;
+}
+
+.btn-danger {
+  position: relative;
+  background: rgba(255, 93, 115, 0.12);
+  color: #ffb9c4;
+}
+
+.btn-danger::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid rgba(255, 93, 115, 0.35);
+  pointer-events: none;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(255, 93, 115, 0.2);
 }
 
 .btn-ghost:hover:not(:disabled) {
@@ -1654,6 +1673,56 @@ textarea.field {
 
 .hist-item.old {
   opacity: 0.6;
+}
+
+/* earlier sessions, one dropdown per day */
+.day-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.day-group {
+  border-radius: var(--r-m);
+  overflow: hidden;
+}
+
+.day-group summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.day-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.day-label {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 1.02rem;
+  flex: 1;
+}
+
+.day-group .chev {
+  color: var(--ink-faint);
+  transition: transform 0.25s ease;
+}
+
+.day-group[open] .chev {
+  transform: rotate(180deg);
+}
+
+.day-group .hist-list {
+  padding: 0 14px 14px;
+}
+
+.day-group .hist-item {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 @media (min-width: 700px) {

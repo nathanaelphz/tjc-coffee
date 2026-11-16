@@ -205,7 +205,7 @@ function Board({ onLogout }: { onLogout: () => void }) {
       {tab === "orders" && <OrdersBoard orders={live} freshSet={fresh.current} />}
       {tab === "floor" && <Floor config={config} onSaved={() => showToast(t("mapSaved"))} />}
       {tab === "menu" && <Menu config={config} />}
-      {tab === "history" && <History orders={orders} onEnded={() => showToast(t("sessionEnded"))} />}
+      {tab === "history" && <History orders={orders} notify={showToast} />}
 
       {toast && <div className="toast">{toast}</div>}
     </div>
@@ -391,11 +391,32 @@ function Menu({ config }: { config: AppConfig }) {
 
 /* ---------------- history ---------------- */
 
-function History({ orders, onEnded }: { orders: Order[]; onEnded: () => void }) {
-  const { t, drinkName, formatLabel } = useI18n();
+const DAY_LOCALE = { en: "en-MY", zh: "zh-CN", ms: "ms-MY" } as const;
+
+function History({ orders, notify }: { orders: Order[]; notify: (msg: string) => void }) {
+  const { t, lang, drinkName, formatLabel } = useI18n();
 
   const session = orders.filter((o) => !o.archived);
   const past = orders.filter((o) => o.archived);
+
+  // Earlier sessions, grouped by day, newest day first.
+  const days: { key: string; label: string; list: Order[] }[] = [];
+  for (const o of [...past].reverse()) {
+    const d = new Date(o.createdAt);
+    const key = d.toDateString();
+    let g = days.find((x) => x.key === key);
+    if (!g) {
+      g = {
+        key,
+        label: d.toLocaleDateString(DAY_LOCALE[lang], { weekday: "long", day: "numeric", month: "short", year: "numeric" }),
+        list: [],
+      };
+      days.push(g);
+    }
+    g.list.push(o);
+  }
+  for (const g of days) g.list.sort((a, b) => b.createdAt - a.createdAt);
+  days.sort((a, b) => b.list[0].createdAt - a.list[0].createdAt);
   const drinkCount = (list: Order[]) => list.reduce((n, o) => n + o.items.reduce((m, it) => m + it.qty, 0), 0);
 
   const counts = new Map<DrinkId, number>();
@@ -409,7 +430,21 @@ function History({ orders, onEnded }: { orders: Order[]; onEnded: () => void }) 
     const msg = (unfinished > 0 ? t("endSessionUnfinished") + "\n\n" : "") + t("endSessionConfirm");
     if (window.confirm(msg)) {
       await backend.endSession();
-      onEnded();
+      notify(t("sessionEnded"));
+    }
+  };
+
+  const clearSession = async () => {
+    if (window.confirm(t("clearSessionConfirm"))) {
+      await backend.clearSession();
+      notify(t("cleared"));
+    }
+  };
+
+  const clearAll = async () => {
+    if (window.confirm(t("clearAllConfirm")) && window.confirm(t("clearAllConfirm2"))) {
+      await backend.clearAll();
+      notify(t("cleared"));
     }
   };
 
@@ -418,7 +453,7 @@ function History({ orders, onEnded }: { orders: Order[]; onEnded: () => void }) 
       <div className="row">
         <strong style={{ fontFamily: "var(--font-display)", fontWeight: 500 }}>{formatLabel(o.tableLabel)}</strong>
         <span className="muted" style={{ fontSize: "0.82rem" }}>
-          {new Date(o.createdAt).toLocaleString("en-MY", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+          {new Date(o.createdAt).toLocaleTimeString("en-MY", { hour: "2-digit", minute: "2-digit" })}
         </span>
       </div>
       <div className="muted" style={{ marginTop: 4 }}>
@@ -473,16 +508,35 @@ function History({ orders, onEnded }: { orders: Order[]; onEnded: () => void }) 
         <button className="pill btn-ghost" onClick={endSession} disabled={session.length === 0}>
           {t("endSession")}
         </button>
+        <button className="pill btn-danger" onClick={clearSession} disabled={session.length === 0}>
+          {t("clearSession")}
+        </button>
+        <button className="pill btn-danger" onClick={clearAll} disabled={orders.length === 0}>
+          {t("clearAll")}
+        </button>
       </div>
 
       <h2 className="hist-day">{t("thisSession")}</h2>
       {session.length === 0 && <p className="empty">{t("nothingYet")}</p>}
       <div className="hist-list">{[...session].reverse().map(renderItem)}</div>
 
-      {past.length > 0 && (
+      {days.length > 0 && (
         <>
           <h2 className="hist-day">{t("earlierSessions")}</h2>
-          <div className="hist-list">{[...past].reverse().map(renderItem)}</div>
+          <div className="day-groups">
+            {days.map((g, i) => (
+              <details className="glass rim day-group" key={g.key} open={i === 0}>
+                <summary>
+                  <span className="day-label">{g.label}</span>
+                  <span className="tab-count">{g.list.length} {t("ordersN")}</span>
+                  <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </summary>
+                <div className="hist-list">{g.list.map(renderItem)}</div>
+              </details>
+            ))}
+          </div>
         </>
       )}
     </section>
