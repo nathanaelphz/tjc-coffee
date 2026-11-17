@@ -526,13 +526,6 @@ textarea.field {
   animation-delay: calc(var(--base) + var(--i) * 90ms);
 }
 
-.hero-title .w:last-of-type {
-  background: linear-gradient(100deg, var(--peach) 10%, var(--matcha) 90%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
 .hero-sub {
   margin-top: 16px;
   max-width: 34ch;
